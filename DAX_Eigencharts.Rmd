@@ -349,3 +349,115 @@ ggplot(vec, mapping = aes(x=minute, y=vec4$eigenchart_4)) +
 ```
 
 The first part of the story ends here...
+
+
+```{r}
+
+# second part: start over with all 165 charts
+# can they be clustered? are there similarities? But: In terms of what? Idea:
+# one dimension: movement in the first half of the day XX points up/down
+# second dimension: movement in the second half of the day YY points up/down
+
+rm(list=ls())
+dax_2018 <- read.csv("dax_2018.csv")
+
+# want to obtain time series for each date, thus pivot minutes to columns
+dax_2018_piv <- dax_2018 %>% pivot_wider(names_from = time, values_from = close)
+
+# look for missing values: only keep complete time series
+miss_val <- 0
+for(i in 1:length(dax_2018_piv$date)){miss_val[i] <- (sum(is.na(dax_2018_piv[i,])))}
+
+dax_2018_piv_clean <- dax_2018_piv[miss_val==0,]
+
+# sort colnames in ascending minutes
+sort_cols <- sort(colnames(dax_2018_piv_clean)[2:841])
+all_cols <- c("date", sort_cols)
+
+dax_series <- dax_2018_piv_clean[,all_cols]
+
+rm(list=ls()[-5]) # keep only dax_series
+
+# put together the dax change of the 1st half and the 2nd half day, plus date
+dax_movement <- cbind(dax_series["date"], 
+                      dax_series["08:00:00"] - dax_series["01:00:00"], 
+                      dax_series["14:59:00"] - dax_series["08:00:00"])
+
+colnames(dax_movement) <- c("date", "am_movement", "pm_movement")
+
+# scatter plot of am_movement vs. pm_movement
+ggplot(dax_movement, mapping = aes(x=am_movement, y=pm_movement)) +
+  geom_point()
+
+dax_movement[,2:3]
+
+# kmeans using Lloyd-algorithm (repeat short explaination)
+km <- kmeans(dax_movement[,2:3], centers = 3, algorithm = "Lloyd", iter.max = 30, nstart = 20)
+# no convergence with iter.max = 10 (default), set to 30
+
+# check, if we get close to absolute minimum of total within-cluster sum of squares
+i = 1
+for (i in 1:20){
+  km <- kmeans(dax_movement[,2:3], centers = 3, algorithm="Lloyd", iter.max = 30, nstart = 1)
+  print(km$tot.withinss)
+  i = i+1
+}
+# can get stuck, but only once in 20 starts. so nstart = 20 is more than enough
+
+# need to specify the optimal number of clusters:
+# Function that runs kmeans clustering and extracts the total within-cluster sum of square 
+wss_fct <- function(k) {
+  km <- kmeans(dax_movement[,2:3], centers=k, algorithm="Lloyd", iter.max = 30, nstart = 20)
+  print(km$tot.withinss)
+}
+
+# Define a vector k 
+num_centers <- 1:15
+
+# extract wss for 1-15 clusters and put LABELS to x- and y-axes
+wss <- sapply(num_centers, FUN=wss_fct)
+data.frame(num_centers, wss) %>%
+  ggplot(aes(x = num_centers, y = wss)) +
+  geom_point(size = 3) + geom_line() +
+  xlab("Number of clusters") +
+  ylab("Total within-clusters sum of squares") 
+
+# plot ideal number of clusters: 3 (ellbow)
+km <- kmeans(dax_movement[,2:3], centers = 3, algorithm = "Lloyd", iter.max = 30, nstart = 20)
+
+# add cluster-assignment to the data
+dax_movement_cluster <- bind_cols(dax_movement, cluster = as.factor(km$cluster)) 
+
+p <- dax_movement_cluster %>% 
+  ggplot() +
+  geom_point(aes(am_movement, pm_movement, color = cluster, text = date)) +
+geom_point(data = as.data.frame(km$centers), aes(am_movement, pm_movement), size = 3)
+ggplotly(p)
+
+# further analysis:
+# without clustering we are left with simply dividing am movements in POS (up) and NEG (down)
+# but means of pm_movement are close to zero, thus K.O. strategy cannot be applied
+
+amNEG <- dax_movement_cluster %>% filter(am_movement < 0)
+mean(amNEG$am_movement)
+mean(amNEG$pm_movement)
+
+amPOS <- dax_movement_cluster %>% filter(am_movement > 0)
+mean(amPOS$am_movement)
+mean(amPOS$pm_movement)
+
+# can we make use of the clustering? 
+# e.g. cluster 1: am movement negativ but pm movement randomly distributed
+
+cluster1 <- dax_movement_cluster %>% filter(cluster == 1)
+mean(cluster1$am_movement)
+mean(cluster1$pm_movement)
+
+# conclusion: clustering results are not usefull for applying K.O. strategy
+
+```
+
+
+# Summarise and Reflect
+
+Highlight what you think are the most interesting results. Also reflect on what you have learned during the project, or what types of problems you faced.
