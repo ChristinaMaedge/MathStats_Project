@@ -1,0 +1,351 @@
+---
+title: "DAX Eigencharts"
+author: "Marco Landt-Hayen"
+date: "12 12 2019"
+output: rmdformats::readthedown
+---
+
+# Research question
+
+When I was 12 years old, I saw an intraday chart of the German stock index (DAX) for the first time. It was in the local newspaper and came with lots of numbers and figures for different stocks, currencies, commodities etc. And all these numbers and especially the DAX intraday chart fascinated me at once: It was love on the first sight!
+
+Since then I have seen many hundrets of DAX charts. And at some point I had the strange feeling, that there is only a limited number of different DAX charts. And if that assumption holds true, one could take advantage of that. My idea was was the following: If I only saw the first half of the DAX intraday chart, I could try to find similar charts and predict a trend for the second half of the day and bet either on stocks going further up or down.
+
+To do this, I need to answer three questions:
+
+- **Are there characteristic Eigencharts that explain the intraday DAX movement?**
+- **If yes, how many of these Eigencharts do I need to capture a reasonable amount of the total variance in DAX movements?**
+- **If dimensionality reduction does not work efficiently, can we at least cluster DAX movements?**
+
+# My approach
+
+## Data
+
+There are plenty of possibilities to get intraday charts for all kinds of stocks, indices, currencies etc. from the internet. In this project we work with data from *BacktestMarket*. They provide a history of DAX charts on a daily basis back to 2000. It comes as so called tick data: You get DAX values for each minute: Open, high, low, close and volume.
+
+The complete data set is too large to put it on GitHub. Therefore we need to focus on a one year history. I picked 2018 data.
+
+## Methods
+
+As outlined in the research question, we first want to look for Eigencharts. This can best be done with principal component analysis (PCA). Cumulating the obtained eigenvalues gives you a measure of the partial amount of variance captured. This answers the first two questions.
+
+And in the end we want to do some kmeans clustering to answer the third question.
+
+# Analysis
+
+We need to include the following libraries:
+
+```{r message=FALSE, error=FALSE, warning=FALSE}
+library(tidyverse) # data wrangling and ggplot
+library(chron) # converting time
+library(factoextra) # clustering
+library(lubridate) # converting date
+library(pracma) # dot-product
+library(plotly) # plot with metadata
+```
+
+The following code chunk can only be run with the original data set. As I mentioned above, the complete data set is too large to put it on GitHub. In case you want to work with the whole data, feel free to ask me.
+
+```{r eval = FALSE}
+## read in complete data set
+# dax_history <- read.csv("dax_history.csv", header = FALSE, sep = ";", col.names = c("date", "time", "open", "high", "low", "close", "volume"))
+
+## keep only the columns we need and change date and time format
+# dax_history <- dax_history %>% select(c("date", "time", "close"))
+# dax_history$date <- as.Date(dax_history$date, "%d/%m/%Y")
+# dax_history$time <- chron(times = dax_history$time)
+
+## filter for 2018 and keep only the core time frame
+## note: there is a 7 hour time shift, since its NY time zone
+# dax_2018 <- dax_history[year(dax_history$date) == 2018,]
+# dax_2018 <- dax_2018[dax_2018$time >= "01:00:00",]
+# dax_2018 <- dax_2018[dax_2018$time <= "14:59:00",]
+
+## to get project on gitHub, need to work with this smaller data set
+# write.csv(dax_2018, "dax_2018.csv", row.names = FALSE)
+```
+
+## Preprocessing Data
+
+We are now ready to further preprocess the data. 
+
+- In this project we focus on intraday data for DAX movements on a minute basis for the year 2018. We picked the closing value, which gives us the DAX value for the end of each minute (dax_2018).
+- We want to obtain a separate time series for each date, thus pivot the minutes to be columns and put in the closing value for each minute (dax_2018_piv).
+- This leaves us with 251 time series, each containing 840 minutes from 01:00:00 to 14:59:00. Remember the time shift of 7 hours, since data stems from US (NY time zone).
+
+```{r}
+rm(list=ls()) # clean environment
+dax_2018 <- read.csv("dax_2018.csv")
+dax_2018_piv <- dax_2018 %>% pivot_wider(names_from = time, values_from = close)
+```
+
+- We need to look for missing values and filter only for the 165 complete time series (dax_2018_piv_clean).
+
+```{r}
+miss_val <- 0 # initialize
+for(i in 1:length(dax_2018_piv$date)){miss_val[i] <- (sum(is.na(dax_2018_piv[i,])))}
+dax_2018_piv_clean <- dax_2018_piv[miss_val==0,]
+```
+
+- We then need to sort columns to have an ascending order of minutes (dax_series).
+
+```{r}
+sort_cols <- sort(colnames(dax_2018_piv_clean)[2:841])
+all_cols <- c("date", sort_cols)
+dax_series <- dax_2018_piv_clean[,all_cols]
+```
+ 
+## Example DAX Chart
+
+- Let's plot an example DAX chart to get a feeling for our time series.
+- For ggplot we need to convert the transposed time series to a data.frame (t_vec_df).
+
+```{r}
+minute <- c(1:840) # for the x-axis
+series_number <- 1 # just pick one
+vec <- dax_series[series_number,2:841]
+t_vec <- t(vec)
+t_vec_df <- as.data.frame(t_vec)
+
+ggplot(t_vec_df, mapping = aes(x=minute, y=t_vec_df$V1)) +
+  geom_line() + 
+  xlab("minute") + 
+  ylab("DAX")
+```
+
+## Difference Matrix
+
+- A DAX chart can be fully explained by the absolute difference from minute to minute. So let's calculate the matrix of absolute differences for each time series (dax_series_diff).
+
+```{r}
+dax_series_sub1 <- dax_series[,2:840]
+dax_series_sub2 <- dax_series[,3:841]
+dax_series_diff <- dax_series # initialize
+dax_series_diff[,2] <- rep(0, 165) # in the first minute there is no previous minute, so diff = 0
+dax_series_diff[,3:841] <- dax_series_sub2 - dax_series_sub1
+```
+
+## Example minutely Changes
+
+- Let's plot an example series of the differences from minute to minute for one DAX intraday chart time series to see what we are working with.
+- For ggplot we need to convert the transposed time series to a data.frame (t_vec_df).
+
+```{r}
+series_number <- 1 # just pick one
+vec <- dax_series_diff[series_number,2:841]
+t_vec <- t(vec)
+t_vec_df <- as.data.frame(t_vec)
+
+ggplot(t_vec_df, mapping = aes(x=minute, y=t_vec_df$V1)) +
+  geom_line() + 
+  xlab("minute") + 
+  ylab("DAX change")
+```
+
+## Average DAX Chart
+
+- As prerequisite for PCA we now calculate the series of average absolute minutely changes over all 165 dax series (avg_diff).
+- We then restore the chart from the series of average differences and plot the chart.
+
+```{r}
+avg_diff <- colMeans(dax_series_diff[,2:841])
+
+avg_acc <- avg_diff # initialize
+for (i in 2:length(t(avg_acc))){
+  avg_acc[i] <- avg_acc[i-1] + avg_acc[i]
+}
+
+# plot DAX restored from the average change per minute
+vec <- as.data.frame(avg_acc)
+
+ggplot(vec, mapping = aes(x=minute, y=vec$avg_acc)) +
+  geom_line() + 
+  xlab("minute") + 
+  ylab("average DAX chart")
+```
+
+## PCA
+
+- To prepare the input data for our PCA analysis we need to center each time series of minutely differences by substracting the average difference from every time series (dax_series_diff_center).
+- Scaling is not necessary since we explicitely want to capture large volatility in intraday movements as a feature.
+
+```{r}
+avg_diff_sub <- avg_diff[2:840] # omit column 01:00:00 (only filled with zeros)
+dax_series_diff_center <- dax_series_diff[,3:841] # initialize and omit date column
+
+for (i in 1:165){
+  dax_series_diff_center[i,] <- dax_series_diff_center[i,] - avg_diff_sub
+}
+```
+
+- Remember: We look for Eigencharts. 
+- But before we eventually discover our Eigencharts, we perform PCA on the centered time series of absolute minutely changes (dax_series_diff_center).
+- This is done by looking for eigenvalues and eigenvectors of the covariance matrix (dax_cov).
+
+```{r}
+dax_cov <- cov(t(dax_series_diff_center))
+
+e <- eigen(dax_cov)
+eigenvalues <- e$values
+eigenvectors <- e$vector
+```
+
+- To make sure we found eigenvalues and eigenvectors, we shortly proof some characteristics.
+
+```{r}
+# proof that evec1 and eval1 fit together
+evec1 <- eigenvectors[,1]
+eval1 <- eigenvalues[1]
+(dax_cov %*% evec1) - (eval1 * evec1) # correct, since obtain vector of zeros
+
+evec2 <- eigenvectors[,2]
+evec3 <- eigenvectors[,3]
+evec4 <- eigenvectors[,4]
+evec5 <- eigenvectors[,5]
+
+dot(evec1,evec2) # correct, orthogonal
+```
+
+- The so called PC scores give us the projection of the original data onto the eigenvectors.
+- However - I had some trouble to get the PC scores. Therefore I needed to convert dax_series_diff_center first to data.frame (dax_series_diff_center_df) and later to matrix - by hand (dax_series_diff_center_matrix).
+- Otherwise R doesn't let us compute the PC scores...
+
+```{r}
+dax_series_diff_center_df <- as.data.frame(dax_series_diff_center)
+dax_series_diff_center_matrix <- matrix(rep(0,165*839),nrow=165) # initialize
+
+for (i in 1:839){
+  dax_series_diff_center_matrix[,i] <- dax_series_diff_center_df[,i]
+}
+
+pc_scores <- eigenvectors %*% dax_series_diff_center_matrix
+```
+
+- To recover the original matrix of centered minutely changes time series, one needs to multiply the PC scores (pc_scores) with the inverse eigenvector-matrix from the left-hand side.
+- The inverse in this case is just the transpose.
+
+```{r}
+temp <- t(eigenvectors) %*% pc_scores # indeed looks identical to dax_series_diff_center_matrix, as expected
+```
+
+- Before we finally look at the Eigencharts, we first want to answer the second question: How many Eigencharts do I need to capture a reasonable amount of the total variance in DAX movements? 
+- By *reasonable* we mean more than 75% in our case.
+- To answer the question, we need to accumulate the eigenvalues and divide by the sum over *all* eigenvalues.
+- Plotting the accumulated variance over the number of necessary eigenvalues confirms, that we need at least the **first 75 eigenvectors to capture more than 75% of the total variance**.
+
+```{r}
+var_eigenvalues_acc <- 0 # initialize
+for (i in 1:length(eigenvalues)){
+  var_eigenvalues_acc[i] <- sum(eigenvalues[1:i]) / sum(eigenvalues)
+}
+
+var_eigenvalues_acc_df <- data.frame(var_eigenvalues_acc)
+
+number_eigenvalue <- c(1:165) # for x-axis
+ggplot(var_eigenvalues_acc_df, mapping = aes(x=number_eigenvalue, y=var_eigenvalues_acc_df$var_eigenvalues_acc)) +
+  geom_line() + 
+  xlab("Number of Eigenvalues") + 
+  ylab("Accumulated Variance captured")
+```
+
+## PCA Conclusion
+
+We started with 165 time series of intraday DAX movements. As we have seen, we need at least 75 eigenvectors to capture a reasonable amount - in this case 75% - of the total variance. Before the analysis I hoped to end up with - let's say - ten Eigencharts to explain the world of intraday DAX charts and to predict movements for new charts that are not part of the test set. This doesn't work, dimensionality reduction is not as efficient as I expected.
+
+## Example Eigencharts
+
+- Nevertheless, we want to look at two eigenvectors and create the according eigencharts, to get a better feeling on how an eigenchart looks.
+- We already have extracted the first 5 eigenvectors evec1 .. evec5.
+- Each eigenvector has length 165 as we started with 165 centered time series of absolute minutely dax movements (dax_series_diff_center_matrix).
+- So let's recover the minutely differences of an eigenchart (eigenchart_diff) by adding up the products of the i-th entry of an eigenvector with the i-th entry of dax_series_diff_center_matrix.
+- We then obtain the eigenchart by accumulating the minutely changes in eigenchart_diff.
+
+```{r}
+eigenchart_diff_1 <- rep(0,839) # initialize...
+eigenchart_diff_2 <- rep(0,839)
+eigenchart_diff_3 <- rep(0,839)
+eigenchart_diff_4 <- rep(0,839)
+eigenchart_diff_5 <- rep(0,839)
+eigenchart_1 <- rep(0,840)
+eigenchart_2 <- rep(0,840)
+eigenchart_3 <- rep(0,840)
+eigenchart_4 <- rep(0,840)
+eigenchart_5 <- rep(0,840)
+
+for (i in 1:length(evec1)){
+  eigenchart_diff_1 <- eigenchart_diff_1 + (evec1[i] * dax_series_diff_center_matrix[i,])
+}
+
+for (i in 1:length(evec2)){
+  eigenchart_diff_2 <- eigenchart_diff_2 + (evec2[i] * dax_series_diff_center_matrix[i,])
+}
+
+for (i in 1:length(evec3)){
+  eigenchart_diff_3 <- eigenchart_diff_3 + (evec3[i] * dax_series_diff_center_matrix[i,])
+}
+
+for (i in 1:length(evec4)){
+  eigenchart_diff_4 <- eigenchart_diff_4 + (evec4[i] * dax_series_diff_center_matrix[i,])
+}
+
+for (i in 1:length(evec5)){
+  eigenchart_diff_5 <- eigenchart_diff_5 + (evec5[i] * dax_series_diff_center_matrix[i,])
+}
+
+# recover DAX eigenchart from eigenchart_diff vector
+
+for (i in 1:length(eigenchart_diff_1)){
+  eigenchart_1[i+1] <- eigenchart_1[i] + eigenchart_diff_1[i]
+}
+
+for (i in 1:length(eigenchart_diff_2)){
+  eigenchart_2[i+1] <- eigenchart_2[i] + eigenchart_diff_2[i]
+}
+
+for (i in 1:length(eigenchart_diff_3)){
+  eigenchart_3[i+1] <- eigenchart_3[i] + eigenchart_diff_3[i]
+}
+
+for (i in 1:length(eigenchart_diff_4)){
+  eigenchart_4[i+1] <- eigenchart_4[i] + eigenchart_diff_4[i]
+}
+
+for (i in 1:length(eigenchart_diff_5)){
+  eigenchart_5[i+1] <- eigenchart_5[i] + eigenchart_diff_5[i]
+}
+
+# plot DAX restored from the average change per minute
+vec1 <- as.data.frame(eigenchart_1)
+vec2 <- as.data.frame(eigenchart_2)
+vec3 <- as.data.frame(eigenchart_3)
+vec4 <- as.data.frame(eigenchart_4)
+vec5 <- as.data.frame(eigenchart_5)
+
+# plot only 1st (negativ) and 4th (positiv)
+ggplot(vec, mapping = aes(x=minute, y=vec1$eigenchart_1)) +
+  geom_line() + 
+  xlab("minute") + 
+  ylab("1st DAX Eigenchart")
+
+# ggplot(vec, mapping = aes(x=minute, y=vec2$eigenchart_2)) +
+#  geom_line() + 
+#  xlab("minute") + 
+#  ylab("2nd DAX Eigenchart")
+
+# ggplot(vec, mapping = aes(x=minute, y=vec3$eigenchart_3)) +
+#  geom_line() + 
+#  xlab("minute") + 
+#  ylab("3rd DAX Eigenchart")
+
+ggplot(vec, mapping = aes(x=minute, y=vec4$eigenchart_4)) +
+  geom_line() + 
+  xlab("minute") + 
+  ylab("4th DAX Eigenchart")
+
+# ggplot(vec, mapping = aes(x=minute, y=vec5$eigenchart_5)) +
+#  geom_line() + 
+#  xlab("minute") + 
+#  ylab("5th DAX Eigenchart")
+```
+
+The first part of the story ends here...
