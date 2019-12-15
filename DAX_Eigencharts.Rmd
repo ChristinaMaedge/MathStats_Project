@@ -27,11 +27,11 @@ The complete data set is too large to put it on GitHub. Therefore we need to foc
 
 ## Methods
 
-As outlined in the research question, we first want to look for Eigencharts. This can best be done with principal component analysis (PCA). Cumulating the obtained eigenvalues gives you a measure of the partial amount of variance captured. This answers the first two questions.
+As outlined in the research question, we want to look for Eigencharts. This can best be done with principal component analysis (PCA). Cumulating the obtained eigenvalues gives us a measure of the partial amount of variance captured. This answers the first two questions.
 
 And in the end we want to do some kmeans clustering to answer the third question.
 
-# Analysis
+# Analysis Part 1 (PCA)
 
 We need to include the following libraries:
 
@@ -103,7 +103,7 @@ dax_series <- dax_2018_piv_clean[,all_cols]
 
 ```{r}
 minute <- c(1:840) # for the x-axis
-series_number <- 1 # just pick one
+series_number <- 1 # just pick the first one
 vec <- dax_series[series_number,2:841]
 t_vec <- t(vec)
 t_vec_df <- as.data.frame(t_vec)
@@ -116,7 +116,9 @@ ggplot(t_vec_df, mapping = aes(x=minute, y=t_vec_df$V1)) +
 
 ## Difference Matrix
 
-- A DAX chart can be fully explained by the absolute difference from minute to minute. So let's calculate the matrix of absolute differences for each time series (dax_series_diff).
+- A DAX chart can be fully explained by the starting value plus the absolute difference from minute to minute. So let's calculate the matrix of absolute differences for each time series (dax_series_diff).
+- To efficiently calculate the minutely differences we simply shift the dax series by one minute (dax_series_sub1 and dax_series_sub2) and substract the shifted series.
+- Note: The first column gives us the date.
 
 ```{r}
 dax_series_sub1 <- dax_series[,2:840]
@@ -132,7 +134,7 @@ dax_series_diff[,3:841] <- dax_series_sub2 - dax_series_sub1
 - For ggplot we need to convert the transposed time series to a data.frame (t_vec_df).
 
 ```{r}
-series_number <- 1 # just pick one
+series_number <- 1 # just pick the first one
 vec <- dax_series_diff[series_number,2:841]
 t_vec <- t(vec)
 t_vec_df <- as.data.frame(t_vec)
@@ -146,7 +148,7 @@ ggplot(t_vec_df, mapping = aes(x=minute, y=t_vec_df$V1)) +
 ## Average DAX Chart
 
 - As prerequisite for PCA we now calculate the series of average absolute minutely changes over all 165 dax series (avg_diff).
-- We then restore the chart from the series of average differences and plot the chart.
+- We then restore the corresponding chart from the series of average differences and plot the chart.
 
 ```{r}
 avg_diff <- colMeans(dax_series_diff[,2:841])
@@ -172,7 +174,7 @@ ggplot(vec, mapping = aes(x=minute, y=vec$avg_acc)) +
 
 ```{r}
 avg_diff_sub <- avg_diff[2:840] # omit column 01:00:00 (only filled with zeros)
-dax_series_diff_center <- dax_series_diff[,3:841] # initialize and omit date column
+dax_series_diff_center <- dax_series_diff[,3:841] # initialize: omit date column and first column (only filled with zeros)
 
 for (i in 1:165){
   dax_series_diff_center[i,] <- dax_series_diff_center[i,] - avg_diff_sub
@@ -233,7 +235,7 @@ temp <- t(eigenvectors) %*% pc_scores # indeed looks identical to dax_series_dif
 - Before we finally look at the Eigencharts, we first want to answer the second question: How many Eigencharts do I need to capture a reasonable amount of the total variance in DAX movements? 
 - By *reasonable* we mean more than 75% in our case.
 - To answer the question, we need to accumulate the eigenvalues and divide by the sum over *all* eigenvalues.
-- Plotting the accumulated variance over the number of necessary eigenvalues confirms, that we need at least the **first 75 eigenvectors to capture more than 75% of the total variance**.
+- Plotting the accumulated variance over the number of necessary eigenvalues confirms that we need at least the **first 75 eigenvectors to capture more than 75% of the total variance**.
 
 ```{r}
 var_eigenvalues_acc <- 0 # initialize
@@ -244,27 +246,24 @@ for (i in 1:length(eigenvalues)){
 var_eigenvalues_acc_df <- data.frame(var_eigenvalues_acc)
 
 number_eigenvalue <- c(1:165) # for x-axis
-ggplot(var_eigenvalues_acc_df, mapping = aes(x=number_eigenvalue, y=var_eigenvalues_acc_df$var_eigenvalues_acc)) +
-  geom_line() + 
+p_sum_eval <- ggplot(var_eigenvalues_acc_df, mapping = aes(x=number_eigenvalue, y=var_eigenvalues_acc_df$var_eigenvalues_acc)) +
+  geom_point() + 
   xlab("Number of Eigenvalues") + 
   ylab("Accumulated Variance captured")
+ggplotly(p_sum_eval)
 ```
 
 ## Recover DAX series
 
+Let's have a look, how we can recover a single DAX time series from an increasing number of eigenvectors. To obtain the *original* data we need to multiply the transpose eigenvector matrix with PC scores from the left-hand side - as mentioned earlier. But we can also restrict ourselves to the first n eigenvectors and the first n PC scores to produce an approximation. The more eigenvectors we include, the better the approximation. As seen, recovering a chart from the first 75 eigenvectors captures 75% of the total variance and thus should give us an acceptable approximation of the original DAX chart.
 
-
-!!! Add the starting value for the 1st DAX time series!!!
-
-
-
-
-Let's have a look, how we can recover a single DAX time series from only a limited number of eigenvectors. To obtain the original data we need to multiply the transpose eigenvector matrix with PC scores from the left-hand side - as proofed earlier. But we can also restrict ourselves to the first n eigenvectors and the first n PC scores to produce an approximation. 
-
-- We try to reproduce the first DAX intraday chart that we have already seen above.
-- Using all 165 eigenvectors gives us the exact original data.
-- Taking only the first 75 eigenvectors into account, we can roughly recognize the original series.
-- But using only the first 10 eigenvectors does not fit the original series at all.
+- We have already seen a plot of the first intraday DAX series above.
+- Now we try to reproduce the first DAX intraday chart using an increasing number of eigenvectors.
+- Using only the first 10 eigenvectors does not fit the original series at all.
+- Taking the first 75 eigenvectors into account, we can recognize the original series.
+- And from all 165 eigenvectors we end up with the exact original data.
+- Since we applied PCA to centered minutely changes, we need to de-mean the recovered time series of minutely changes.
+- And to restore the DAX chart, minutely changes need to be summed up and the starting value needs to be added.
 
 ```{r warning=FALSE}
 # recover 1st DAX series from all 165 eigenvectors
@@ -273,6 +272,7 @@ recov_165_s1_diff <- recov_165[1,]
 recov_165_s1_diff_demean <- avg_diff # initialize
 recov_165_s1_diff_demean[2:840] <- recov_165_s1_diff_demean[2:840] + recov_165_s1_diff
 recov_165_s1_diff_demean_acc <- rep(0,840) # initialize
+recov_165_s1_diff_demean_acc[1] <- as.double(dax_series[1,2]) # set starting value
 
 for (i in 2:840){
   recov_165_s1_diff_demean_acc[i] <- recov_165_s1_diff_demean_acc[i-1] +
@@ -284,10 +284,8 @@ vec_165 <- as.data.frame(recov_165_s1_diff_demean_acc)
 p_recov_165 <- ggplot(vec, mapping = aes(x=minute, y=vec_165$recov_165_s1_diff_demean_acc)) +
   geom_line() + 
   xlab("minute") + 
-  ylab("1st DAX series recovered from 165 evecs")
-
-p_recov_165
-
+  ylab("DAX chart") +
+  ggtitle("from 165 eigenvectors")
 
 # recover 1st DAX series from 75 eigenvectors
 recov_75 <- t(eigenvectors)[,1:75] %*% pc_scores[1:75,]
@@ -295,6 +293,7 @@ recov_75_s1_diff <- recov_75[1,]
 recov_75_s1_diff_demean <- avg_diff # initialize
 recov_75_s1_diff_demean[2:840] <- recov_75_s1_diff_demean[2:840] + recov_75_s1_diff
 recov_75_s1_diff_demean_acc <- rep(0,840) # initialize
+recov_75_s1_diff_demean_acc[1] <- as.double(dax_series[1,2]) # set starting value
 
 for (i in 2:840){
   recov_75_s1_diff_demean_acc[i] <- recov_75_s1_diff_demean_acc[i-1] +
@@ -306,7 +305,8 @@ vec_75 <- as.data.frame(recov_75_s1_diff_demean_acc)
 p_recov_75 <- ggplot(vec, mapping = aes(x=minute, y=vec_75$recov_75_s1_diff_demean_acc)) +
   geom_line() + 
   xlab("minute") + 
-  ylab("1st DAX series recovered from 75 evecs")
+  ylab("DAX chart") +
+  ggtitle("from 75 eigenvectors")
 
 
 # recover 1st DAX series from only 10 eigenvectors
@@ -315,6 +315,7 @@ recov_10_s1_diff <- recov_10[1,]
 recov_10_s1_diff_demean <- avg_diff # initialize
 recov_10_s1_diff_demean[2:840] <- recov_10_s1_diff_demean[2:840] + recov_10_s1_diff
 recov_10_s1_diff_demean_acc <- rep(0,840) # initialize
+recov_10_s1_diff_demean_acc[1] <- as.double(dax_series[1,2]) # set starting value
 
 for (i in 2:840){
   recov_10_s1_diff_demean_acc[i] <- recov_10_s1_diff_demean_acc[i-1] +
@@ -326,7 +327,8 @@ vec_10 <- as.data.frame(recov_10_s1_diff_demean_acc)
 p_recov_10 <- ggplot(vec, mapping = aes(x=minute, y=vec_10$recov_10_s1_diff_demean_acc)) +
   geom_line() + 
   xlab("minute") + 
-  ylab("1st DAX series recovered from 10 evecs")
+  ylab("DAX chart") +
+  ggtitle("from 10 eigenvectors")
 
 grid.arrange(p_recov_10, p_recov_75, p_recov_165, nrow = 3)
 
@@ -338,13 +340,19 @@ We started with 165 time series of intraday DAX movements. As we have seen, we n
 
 ## Example Eigencharts
 
-- Nevertheless, we want to look at two eigenvectors and create the according eigencharts, to get a better feeling on how an eigenchart looks.
-- We already have extracted the first 5 eigenvectors evec1 .. evec5.
+- Nevertheless, we want to look at the first eigenvectors and create the according eigencharts, to get a better feeling on how an eigenchart looks.
+- We extract the first 5 eigenvectors evec1 .. evec5.
 - Each eigenvector has length 165 as we started with 165 centered time series of absolute minutely dax movements (dax_series_diff_center_matrix).
 - So let's recover the minutely differences of an eigenchart (eigenchart_diff) by adding up the products of the i-th entry of an eigenvector with the i-th entry of dax_series_diff_center_matrix.
-- We then obtain the eigenchart by accumulating the minutely changes in eigenchart_diff.
+- We then obtain the eigenchart by accumulating the minutely changes of eigenchart_diff.
 
 ```{r}
+evec1 <- eigenvectors[,1]
+evec2 <- eigenvectors[,2]
+evec3 <- eigenvectors[,3]
+evec4 <- eigenvectors[,4]
+evec5 <- eigenvectors[,5]
+
 eigenchart_diff_1 <- rep(0,839) # initialize...
 eigenchart_diff_2 <- rep(0,839)
 eigenchart_diff_3 <- rep(0,839)
@@ -409,127 +417,142 @@ vec5 <- as.data.frame(eigenchart_5)
 p1 <- ggplot(vec, mapping = aes(x=minute, y=vec1$eigenchart_1)) +
   geom_line() + 
   xlab("minute") + 
-  ylab("1st DAX Eigenchart")
+  ylab("DAX") +
+  ggtitle("1st DAX Eigenchart")
 
 p2 <- ggplot(vec, mapping = aes(x=minute, y=vec2$eigenchart_2)) +
   geom_line() + 
   xlab("minute") + 
-  ylab("2nd DAX Eigenchart")
+  ylab("DAX") +
+  ggtitle("2nd DAX Eigenchart")
 
 p3 <- ggplot(vec, mapping = aes(x=minute, y=vec3$eigenchart_3)) +
   geom_line() + 
   xlab("minute") + 
-  ylab("3rd DAX Eigenchart")
+  ylab("DAX") +
+  ggtitle("3rd DAX Eigenchart")
 
 p4 <- ggplot(vec, mapping = aes(x=minute, y=vec4$eigenchart_4)) +
   geom_line() + 
   xlab("minute") + 
-  ylab("4th DAX Eigenchart")
+  ylab("DAX") +
+  ggtitle("4th DAX Eigenchart")
 
 # ggplot(vec, mapping = aes(x=minute, y=vec5$eigenchart_5)) +
 #  geom_line() + 
 #  xlab("minute") + 
-#  ylab("5th DAX Eigenchart")
+#  ylab("DAX") +
+#  ggtitle("5th DAX Eigenchart")
 
 grid.arrange(p1,p2,p3,p4, nrow=2)
 ```
 
+# Analysis Part 2 (kmeans)
 
+The first part of the story ends here. Explaining the universe of intraday DAX charts by only a few eigencharts failed. But are there similarities in all these DAX charts? Can they be clustered? But how do we want to define *similarity* of two DAX charts?
 
+One way to start with is the following: We split each daily DAX chart in two parts: The first 7 hours of trading (a.m.) and the second 7 hours (p.m.).
 
+## Preprocessing the data
 
-
-
-The first part of the story ends here...
-
+- Let's start over with all 165 intraday DAX charts from the first part of this project (dax_series).
+- We create a new table (dax_movement) and keep only the date column and calculate the DAX change in the first half (01:00:00 - 08:00:00) and the second half (08:00:00 - 14:59:00) of the trading day.
+- Call the first half *am_movement* and the second half *pm_movement*.
 
 ```{r}
-
-# second part: start over with all 165 charts
-# can they be clustered? are there similarities? But: In terms of what? Idea:
-# one dimension: movement in the first half of the day XX points up/down
-# second dimension: movement in the second half of the day YY points up/down
-
-rm(list=ls())
-dax_2018 <- read.csv("dax_2018.csv")
-
-# want to obtain time series for each date, thus pivot minutes to columns
-dax_2018_piv <- dax_2018 %>% pivot_wider(names_from = time, values_from = close)
-
-# look for missing values: only keep complete time series
-miss_val <- 0
-for(i in 1:length(dax_2018_piv$date)){miss_val[i] <- (sum(is.na(dax_2018_piv[i,])))}
-
-dax_2018_piv_clean <- dax_2018_piv[miss_val==0,]
-
-# sort colnames in ascending minutes
-sort_cols <- sort(colnames(dax_2018_piv_clean)[2:841])
-all_cols <- c("date", sort_cols)
-
-dax_series <- dax_2018_piv_clean[,all_cols]
-
-rm(list=ls()[-5]) # keep only dax_series
-
 # put together the dax change of the 1st half and the 2nd half day, plus date
 dax_movement <- cbind(dax_series["date"], 
                       dax_series["08:00:00"] - dax_series["01:00:00"], 
                       dax_series["14:59:00"] - dax_series["08:00:00"])
 
 colnames(dax_movement) <- c("date", "am_movement", "pm_movement")
+```
 
-# scatter plot of am_movement vs. pm_movement
+- Visualizing the data can best be done with a scatter plot with am_movement on the x-axis and pm_movement on the y-axis.
+
+```{r}
 ggplot(dax_movement, mapping = aes(x=am_movement, y=pm_movement)) +
-  geom_point()
+  geom_point() +
+  ggtitle("DAX intraday movement a.m. vs. p.m.")
+```
 
-dax_movement[,2:3]
+## kmeans
 
-# kmeans using Lloyd-algorithm (repeat short explaination)
+Let's look for homogeneous subgroups in dax movements by performing kmeans clustering. kmeans clustering is a method for partitioning the observations into k groups. The number of clusters *k* needs to be pre-specified. The kmeans algorithm produces a large number of return values, notably: 
+
+- **cluster**: the cluster to which each chart is allocated.
+- **centers**: a matrix of cluster centers.
+- **withinss**: within-cluster sum of squares (= the sum of the squared Euclidean distances to the cluster center) 
+- **tot.withinss**: Total within-cluster sum of squares (= the sum of the withinss).
+- **size**: The number of charts in each cluster.
+
+We will use the **Lloyd algorithm** as discussed in class. There are other algorithms and the major difference between the algorithms is how they do the initial assignment of data points to clusters: The **Lloyd algorithm** therefore selects random DAX movements and defines them as the initial cluster centers. All other DAX movements are then assigned to these cluster centers such that the within-cluster variance is minimized. Then the cluster center is re-calculated. This represents one iteration of the Lloyd algorithm. 
+
+We increase the maximum number of iterations **iter.max** from default (= 10 iterations) to 30, to ensure the algorithm to converge. And we want to repeat the cluster assignment 20 times by setting **nstart**. This avoids ending up in a local minimum of total within-cluster sum of squares.
+
+```{r}
+# kmeans using Lloyd-algorithm: Looking for 3 clusters in this example
 km <- kmeans(dax_movement[,2:3], centers = 3, algorithm = "Lloyd", iter.max = 30, nstart = 20)
-# no convergence with iter.max = 10 (default), set to 30
 
-# check, if we get close to absolute minimum of total within-cluster sum of squares
+# make sure to get close to the absolute minimum of total within-cluster sum of squares
 i = 1
 for (i in 1:20){
   km <- kmeans(dax_movement[,2:3], centers = 3, algorithm="Lloyd", iter.max = 30, nstart = 1)
   print(km$tot.withinss)
   i = i+1
 }
-# can get stuck, but only once in 20 starts. so nstart = 20 is more than enough
+```
 
-# need to specify the optimal number of clusters:
+To find the optimal number k of clusters, we use the function *wss_fct* from class and apply the *ellbow-method*.
+
+```{r}
 # Function that runs kmeans clustering and extracts the total within-cluster sum of square 
 wss_fct <- function(k) {
   km <- kmeans(dax_movement[,2:3], centers=k, algorithm="Lloyd", iter.max = 30, nstart = 20)
   print(km$tot.withinss)
 }
 
-# Define a vector k 
+# Define a vector for k 
 num_centers <- 1:15
 
-# extract wss for 1-15 clusters and put LABELS to x- and y-axes
+# extract wss for 1 to 15 clusters and put LABELS to x- and y-axes
 wss <- sapply(num_centers, FUN=wss_fct)
 data.frame(num_centers, wss) %>%
   ggplot(aes(x = num_centers, y = wss)) +
   geom_point(size = 3) + geom_line() +
   xlab("Number of clusters") +
-  ylab("Total within-clusters sum of squares") 
+  ylab("Total within-clusters sum of squares") +
+  ggtitle("Finding optimal number of clusters")
+```
 
-# plot ideal number of clusters: 3 (ellbow)
+Having **three clusters** seem to be the optimum in this case. We add the cluster assignment to the data (dax_movement_cluster) and plot the clustering results.
+
+```{r warning=FALSE}
 km <- kmeans(dax_movement[,2:3], centers = 3, algorithm = "Lloyd", iter.max = 30, nstart = 20)
 
 # add cluster-assignment to the data
 dax_movement_cluster <- bind_cols(dax_movement, cluster = as.factor(km$cluster)) 
 
+# plot
 p <- dax_movement_cluster %>% 
   ggplot() +
   geom_point(aes(am_movement, pm_movement, color = cluster, text = date)) +
-geom_point(data = as.data.frame(km$centers), aes(am_movement, pm_movement), size = 3)
+  geom_point(data = as.data.frame(km$centers), aes(am_movement, pm_movement), size = 3) +
+  ggtitle("Cluster assignment of DAX movements")
 ggplotly(p)
+```
 
-# further analysis:
-# without clustering we are left with simply dividing am movements in POS (up) and NEG (down)
-# but means of pm_movement are close to zero, thus K.O. strategy cannot be applied
+## kmeans Conclusion
 
+We have divided the daily DAX movements in two halfs: *a.m.* and *p.m.* referring to the first and last 7 hours of a trading day, respectively. This can be used for applying simple trading strategies. For instance by knowing how the DAX has performed in the first half, one could bet on the performance in the second half. This can be done with so called *KnockOut certificates*. 
+
+However, the results we obtained in our clustering analysis are not useful for several reasons:
+
+- Although we find three clusters to be an optimum, it looks more like *ONE* big diffuse cluster, since clusters are not seperated here.
+- There is a big range in both, am_movements and pm_movements and movements seam to - more or less - average out.
+- We do not see a clear tendency for the DAX to move into any direction, it seems to be randomly distributed.
+
+```{r}
 amNEG <- dax_movement_cluster %>% filter(am_movement < 0)
 mean(amNEG$am_movement)
 mean(amNEG$pm_movement)
@@ -537,19 +560,8 @@ mean(amNEG$pm_movement)
 amPOS <- dax_movement_cluster %>% filter(am_movement > 0)
 mean(amPOS$am_movement)
 mean(amPOS$pm_movement)
-
-# can we make use of the clustering? 
-# e.g. cluster 1: am movement negativ but pm movement randomly distributed
-
-cluster1 <- dax_movement_cluster %>% filter(cluster == 1)
-mean(cluster1$am_movement)
-mean(cluster1$pm_movement)
-
-# conclusion: clustering results are not usefull for applying K.O. strategy
-
 ```
 
+## Outlook
 
-# Summarise and Reflect
-
-Highlight what you think are the most interesting results. Also reflect on what you have learned during the project, or what types of problems you faced.
+With the methods we learned in class, I am finally able to analyse the bahaviour of daily stock market indices. My ideas to find a small number of Eigencharts to explain the universe of DAX movements as well as clustering DAX performance by *a.m.* and *p.m* movements have failed. But I have some more ideas in my head. And: If it was easy to predict stock markets, many people would make huge profits. That would be boring... ;-)
