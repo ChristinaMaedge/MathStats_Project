@@ -42,6 +42,7 @@ library(factoextra) # clustering
 library(lubridate) # converting date
 library(pracma) # dot-product
 library(plotly) # plot with metadata
+library(gridExtra) # arrange plots on grid
 ```
 
 The following code chunk can only be run with the original data set. As I mentioned above, the complete data set is too large to put it on GitHub. In case you want to work with the whole data, feel free to ask me.
@@ -192,7 +193,7 @@ eigenvectors <- e$vector
 
 - To make sure we found eigenvalues and eigenvectors, we shortly proof some characteristics.
 
-```{r}
+```{r eval=FALSE, message=FALSE}
 # proof that evec1 and eval1 fit together
 evec1 <- eigenvectors[,1]
 eval1 <- eigenvalues[1]
@@ -204,6 +205,7 @@ evec4 <- eigenvectors[,4]
 evec5 <- eigenvectors[,5]
 
 dot(evec1,evec2) # correct, orthogonal
+dot(evec1,evec1) # correct, length = 1
 ```
 
 - The so called PC scores give us the projection of the original data onto the eigenvectors.
@@ -246,6 +248,88 @@ ggplot(var_eigenvalues_acc_df, mapping = aes(x=number_eigenvalue, y=var_eigenval
   geom_line() + 
   xlab("Number of Eigenvalues") + 
   ylab("Accumulated Variance captured")
+```
+
+## Recover DAX series
+
+
+
+!!! Add the starting value for the 1st DAX time series!!!
+
+
+
+
+Let's have a look, how we can recover a single DAX time series from only a limited number of eigenvectors. To obtain the original data we need to multiply the transpose eigenvector matrix with PC scores from the left-hand side - as proofed earlier. But we can also restrict ourselves to the first n eigenvectors and the first n PC scores to produce an approximation. 
+
+- We try to reproduce the first DAX intraday chart that we have already seen above.
+- Using all 165 eigenvectors gives us the exact original data.
+- Taking only the first 75 eigenvectors into account, we can roughly recognize the original series.
+- But using only the first 10 eigenvectors does not fit the original series at all.
+
+```{r warning=FALSE}
+# recover 1st DAX series from all 165 eigenvectors
+recov_165 <- t(eigenvectors)[,1:165] %*% pc_scores[1:165,]
+recov_165_s1_diff <- recov_165[1,]
+recov_165_s1_diff_demean <- avg_diff # initialize
+recov_165_s1_diff_demean[2:840] <- recov_165_s1_diff_demean[2:840] + recov_165_s1_diff
+recov_165_s1_diff_demean_acc <- rep(0,840) # initialize
+
+for (i in 2:840){
+  recov_165_s1_diff_demean_acc[i] <- recov_165_s1_diff_demean_acc[i-1] +
+    recov_165_s1_diff_demean[i]
+}
+
+vec_165 <- as.data.frame(recov_165_s1_diff_demean_acc)
+
+p_recov_165 <- ggplot(vec, mapping = aes(x=minute, y=vec_165$recov_165_s1_diff_demean_acc)) +
+  geom_line() + 
+  xlab("minute") + 
+  ylab("1st DAX series recovered from 165 evecs")
+
+p_recov_165
+
+
+# recover 1st DAX series from 75 eigenvectors
+recov_75 <- t(eigenvectors)[,1:75] %*% pc_scores[1:75,]
+recov_75_s1_diff <- recov_75[1,]
+recov_75_s1_diff_demean <- avg_diff # initialize
+recov_75_s1_diff_demean[2:840] <- recov_75_s1_diff_demean[2:840] + recov_75_s1_diff
+recov_75_s1_diff_demean_acc <- rep(0,840) # initialize
+
+for (i in 2:840){
+  recov_75_s1_diff_demean_acc[i] <- recov_75_s1_diff_demean_acc[i-1] +
+    recov_75_s1_diff_demean[i]
+}
+
+vec_75 <- as.data.frame(recov_75_s1_diff_demean_acc)
+
+p_recov_75 <- ggplot(vec, mapping = aes(x=minute, y=vec_75$recov_75_s1_diff_demean_acc)) +
+  geom_line() + 
+  xlab("minute") + 
+  ylab("1st DAX series recovered from 75 evecs")
+
+
+# recover 1st DAX series from only 10 eigenvectors
+recov_10 <- t(eigenvectors)[,1:10] %*% pc_scores[1:10,]
+recov_10_s1_diff <- recov_10[1,]
+recov_10_s1_diff_demean <- avg_diff # initialize
+recov_10_s1_diff_demean[2:840] <- recov_10_s1_diff_demean[2:840] + recov_10_s1_diff
+recov_10_s1_diff_demean_acc <- rep(0,840) # initialize
+
+for (i in 2:840){
+  recov_10_s1_diff_demean_acc[i] <- recov_10_s1_diff_demean_acc[i-1] +
+    recov_10_s1_diff_demean[i]
+}
+
+vec_10 <- as.data.frame(recov_10_s1_diff_demean_acc)
+
+p_recov_10 <- ggplot(vec, mapping = aes(x=minute, y=vec_10$recov_10_s1_diff_demean_acc)) +
+  geom_line() + 
+  xlab("minute") + 
+  ylab("1st DAX series recovered from 10 evecs")
+
+grid.arrange(p_recov_10, p_recov_75, p_recov_165, nrow = 3)
+
 ```
 
 ## PCA Conclusion
@@ -321,23 +405,23 @@ vec3 <- as.data.frame(eigenchart_3)
 vec4 <- as.data.frame(eigenchart_4)
 vec5 <- as.data.frame(eigenchart_5)
 
-# plot only 1st (negativ) and 4th (positiv)
-ggplot(vec, mapping = aes(x=minute, y=vec1$eigenchart_1)) +
+# plot first 4 Eigencharts on a grid
+p1 <- ggplot(vec, mapping = aes(x=minute, y=vec1$eigenchart_1)) +
   geom_line() + 
   xlab("minute") + 
   ylab("1st DAX Eigenchart")
 
-# ggplot(vec, mapping = aes(x=minute, y=vec2$eigenchart_2)) +
-#  geom_line() + 
-#  xlab("minute") + 
-#  ylab("2nd DAX Eigenchart")
+p2 <- ggplot(vec, mapping = aes(x=minute, y=vec2$eigenchart_2)) +
+  geom_line() + 
+  xlab("minute") + 
+  ylab("2nd DAX Eigenchart")
 
-# ggplot(vec, mapping = aes(x=minute, y=vec3$eigenchart_3)) +
-#  geom_line() + 
-#  xlab("minute") + 
-#  ylab("3rd DAX Eigenchart")
+p3 <- ggplot(vec, mapping = aes(x=minute, y=vec3$eigenchart_3)) +
+  geom_line() + 
+  xlab("minute") + 
+  ylab("3rd DAX Eigenchart")
 
-ggplot(vec, mapping = aes(x=minute, y=vec4$eigenchart_4)) +
+p4 <- ggplot(vec, mapping = aes(x=minute, y=vec4$eigenchart_4)) +
   geom_line() + 
   xlab("minute") + 
   ylab("4th DAX Eigenchart")
@@ -346,7 +430,15 @@ ggplot(vec, mapping = aes(x=minute, y=vec4$eigenchart_4)) +
 #  geom_line() + 
 #  xlab("minute") + 
 #  ylab("5th DAX Eigenchart")
+
+grid.arrange(p1,p2,p3,p4, nrow=2)
 ```
+
+
+
+
+
+
 
 The first part of the story ends here...
 
