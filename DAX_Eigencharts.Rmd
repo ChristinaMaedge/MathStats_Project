@@ -57,7 +57,7 @@ The following code chunk can only be run with the original data set. As I mentio
 # dax_history$time <- chron(times = dax_history$time)
 
 ## filter for 2018 and keep only the core time frame
-## note: there is a 7 hour time shift, since its NY time zone
+## note: there is a 7 hour time shift, since it's NY time zone
 # dax_2018 <- dax_history[year(dax_history$date) == 2018,]
 # dax_2018 <- dax_2018[dax_2018$time >= "01:00:00",]
 # dax_2018 <- dax_2018[dax_2018$time <= "14:59:00",]
@@ -108,10 +108,12 @@ vec <- dax_series[series_number,2:841]
 t_vec <- t(vec)
 t_vec_df <- as.data.frame(t_vec)
 
-ggplot(t_vec_df, mapping = aes(x=minute, y=t_vec_df$V1)) +
+p_dax_example <- ggplot(t_vec_df, mapping = aes(x=minute, y=t_vec_df$V1)) +
   geom_line() + 
   xlab("minute") + 
   ylab("DAX")
+
+p_dax_example
 ```
 
 ## Difference Matrix
@@ -181,12 +183,18 @@ for (i in 1:165){
 }
 ```
 
-- Remember: We look for Eigencharts. 
-- But before we eventually discover our Eigencharts, we perform PCA on the centered time series of absolute minutely changes (dax_series_diff_center).
-- This is done by looking for eigenvalues and eigenvectors of the covariance matrix (dax_cov).
+Remember: We look for Eigencharts. But before we eventually discover our Eigencharts, we perform PCA on the centered time series of absolute minutely changes (dax_series_diff_center). Some remarks on dimensionality are helpfull:
+
+- We startet with 165 DAX time series, each of length 840 (dax_series).
+- We then came to 165 series of minutely changes of length 839, since first column is zero.
+- The average minutely change was substracted and we obtained (dax_series_diff_center)
+- PCA is done by looking for eigenvalues and eigenvectors of the covariance matrix (dax_cov).
+- With an input of 165 time series, we can obtain a maximum of 165 non-zero eigenvalues.
+- In our case we find 164 non-zero eigenvalues.
+- There are 839 eigenvectors, but with only 164 non-zero eigenvalues we only need to take the first 164 eigenvectors into account.
 
 ```{r}
-dax_cov <- cov(t(dax_series_diff_center))
+dax_cov <- cov(dax_series_diff_center)
 
 e <- eigen(dax_cov)
 eigenvalues <- e$values
@@ -222,14 +230,17 @@ for (i in 1:839){
   dax_series_diff_center_matrix[,i] <- dax_series_diff_center_df[,i]
 }
 
-pc_scores <- eigenvectors %*% dax_series_diff_center_matrix
+pc_scores <- dax_series_diff_center_matrix %*% eigenvectors
 ```
 
-- To recover the original matrix of centered minutely changes time series, one needs to multiply the PC scores (pc_scores) with the inverse eigenvector-matrix from the left-hand side.
+- To recover the original matrix of centered minutely changes time series, one needs to multiply the PC scores (pc_scores) with the inverse eigenvector-matrix.
 - The inverse in this case is just the transpose.
 
 ```{r}
-temp <- t(eigenvectors) %*% pc_scores # indeed looks identical to dax_series_diff_center_matrix, as expected
+temp <- pc_scores %*% t(eigenvectors)# indeed looks identical to dax_series_diff_center_matrix, as expected
+
+# view(temp)
+# view(dax_series_diff_center_matrix)
 ```
 
 - Before we finally look at the Eigencharts, we first want to answer the second question: How many Eigencharts do I need to capture a reasonable amount of the total variance in DAX movements? 
@@ -239,13 +250,13 @@ temp <- t(eigenvectors) %*% pc_scores # indeed looks identical to dax_series_dif
 
 ```{r}
 var_eigenvalues_acc <- 0 # initialize
-for (i in 1:length(eigenvalues)){
+for (i in 1:164){
   var_eigenvalues_acc[i] <- sum(eigenvalues[1:i]) / sum(eigenvalues)
 }
 
 var_eigenvalues_acc_df <- data.frame(var_eigenvalues_acc)
 
-number_eigenvalue <- c(1:165) # for x-axis
+number_eigenvalue <- c(1:164) # for x-axis
 p_sum_eval <- ggplot(var_eigenvalues_acc_df, mapping = aes(x=number_eigenvalue, y=var_eigenvalues_acc_df$var_eigenvalues_acc)) +
   geom_point() + 
   xlab("Number of Eigenvalues") + 
@@ -255,19 +266,19 @@ ggplotly(p_sum_eval)
 
 ## Recover DAX series
 
-Let's have a look, how we can recover a single DAX time series from an increasing number of eigenvectors. To obtain the *original* data we need to multiply the transpose eigenvector matrix with PC scores from the left-hand side - as mentioned earlier. But we can also restrict ourselves to the first n eigenvectors and the first n PC scores to produce an approximation. The more eigenvectors we include, the better the approximation. As seen, recovering a chart from the first 75 eigenvectors captures 75% of the total variance and thus should give us an acceptable approximation of the original DAX chart.
+Let's have a look, how we can recover a single DAX time series from an increasing number of eigenvectors. To obtain the *original* data we need to multiply PC scores with the transpose eigenvector matrix - as mentioned earlier. But we can also restrict ourselves to the first n eigenvectors and the first n PC scores to produce an approximation. The more eigenvectors we include, the better the approximation. As seen, recovering a chart from the first 75 eigenvectors captures 75% of the total variance and thus should give us an acceptable approximation of the original DAX chart.
 
 - We have already seen a plot of the first intraday DAX series above.
 - Now we try to reproduce the first DAX intraday chart using an increasing number of eigenvectors.
 - Using only the first 10 eigenvectors does not fit the original series at all.
 - Taking the first 75 eigenvectors into account, we can recognize the original series.
 - And from all 165 eigenvectors we end up with the exact original data.
-- Since we applied PCA to centered minutely changes, we need to de-mean the recovered time series of minutely changes.
+- Since we applied PCA to centered minutely changes, we need to de-mean the recovered time series of minutely changes by adding the average change from above (avg_diff).
 - And to restore the DAX chart, minutely changes need to be summed up and the starting value needs to be added.
 
 ```{r warning=FALSE}
-# recover 1st DAX series from all 165 eigenvectors
-recov_165 <- t(eigenvectors)[,1:165] %*% pc_scores[1:165,]
+# recover 1st DAX series from 165 eigenvectors
+recov_165 <- pc_scores[,1:165] %*% t(eigenvectors)[1:165,]
 recov_165_s1_diff <- recov_165[1,]
 recov_165_s1_diff_demean <- avg_diff # initialize
 recov_165_s1_diff_demean[2:840] <- recov_165_s1_diff_demean[2:840] + recov_165_s1_diff
@@ -288,7 +299,7 @@ p_recov_165 <- ggplot(vec, mapping = aes(x=minute, y=vec_165$recov_165_s1_diff_d
   ggtitle("from 165 eigenvectors")
 
 # recover 1st DAX series from 75 eigenvectors
-recov_75 <- t(eigenvectors)[,1:75] %*% pc_scores[1:75,]
+recov_75 <- pc_scores[,1:75] %*% t(eigenvectors)[1:75,]
 recov_75_s1_diff <- recov_75[1,]
 recov_75_s1_diff_demean <- avg_diff # initialize
 recov_75_s1_diff_demean[2:840] <- recov_75_s1_diff_demean[2:840] + recov_75_s1_diff
@@ -308,9 +319,8 @@ p_recov_75 <- ggplot(vec, mapping = aes(x=minute, y=vec_75$recov_75_s1_diff_deme
   ylab("DAX chart") +
   ggtitle("from 75 eigenvectors")
 
-
-# recover 1st DAX series from only 10 eigenvectors
-recov_10 <- t(eigenvectors)[,1:10] %*% pc_scores[1:10,]
+# recover 1st DAX series from 10 eigenvectors
+recov_10 <- pc_scores[,1:10] %*% t(eigenvectors)[1:10,]
 recov_10_s1_diff <- recov_10[1,]
 recov_10_s1_diff_demean <- avg_diff # initialize
 recov_10_s1_diff_demean[2:840] <- recov_10_s1_diff_demean[2:840] + recov_10_s1_diff
@@ -331,7 +341,6 @@ p_recov_10 <- ggplot(vec, mapping = aes(x=minute, y=vec_10$recov_10_s1_diff_deme
   ggtitle("from 10 eigenvectors")
 
 grid.arrange(p_recov_10, p_recov_75, p_recov_165, nrow = 3)
-
 ```
 
 ## PCA Conclusion
@@ -341,110 +350,43 @@ We started with 165 time series of intraday DAX movements. As we have seen, we n
 ## Example Eigencharts
 
 - Nevertheless, we want to look at the first eigenvectors and create the according eigencharts, to get a better feeling on how an eigenchart looks.
-- We extract the first 5 eigenvectors evec1 .. evec5.
-- Each eigenvector has length 165 as we started with 165 centered time series of absolute minutely dax movements (dax_series_diff_center_matrix).
-- So let's recover the minutely differences of an eigenchart (eigenchart_diff) by adding up the products of the i-th entry of an eigenvector with the i-th entry of dax_series_diff_center_matrix.
-- We then obtain the eigenchart by accumulating the minutely changes of eigenchart_diff.
+- The eigenvectors represent minutely changes. The according eigenchart cumulates the minutely changes.
+- We then plot the first 4 eigencharts as an example.
 
 ```{r}
-evec1 <- eigenvectors[,1]
-evec2 <- eigenvectors[,2]
-evec3 <- eigenvectors[,3]
-evec4 <- eigenvectors[,4]
-evec5 <- eigenvectors[,5]
+eigencharts <- matrix(rep(0, 840 * 839), nrow = 840) # initialize
 
-eigenchart_diff_1 <- rep(0,839) # initialize...
-eigenchart_diff_2 <- rep(0,839)
-eigenchart_diff_3 <- rep(0,839)
-eigenchart_diff_4 <- rep(0,839)
-eigenchart_diff_5 <- rep(0,839)
-eigenchart_1 <- rep(0,840)
-eigenchart_2 <- rep(0,840)
-eigenchart_3 <- rep(0,840)
-eigenchart_4 <- rep(0,840)
-eigenchart_5 <- rep(0,840)
-
-for (i in 1:length(evec1)){
-  eigenchart_diff_1 <- eigenchart_diff_1 + (evec1[i] * dax_series_diff_center_matrix[i,])
+for (i in 1:839){
+  eigencharts[i+1,] <- eigencharts[i,] + eigenvectors[i,]
 }
 
-for (i in 1:length(evec2)){
-  eigenchart_diff_2 <- eigenchart_diff_2 + (evec2[i] * dax_series_diff_center_matrix[i,])
-}
+eigencharts <- as.data.frame(eigencharts)
 
-for (i in 1:length(evec3)){
-  eigenchart_diff_3 <- eigenchart_diff_3 + (evec3[i] * dax_series_diff_center_matrix[i,])
-}
+p_eigencharts_1 <- ggplot(eigencharts, mapping = aes(x=minute, y=eigencharts[,1])) +
+    geom_line() + 
+    xlab("minute") + 
+    ylab("index") +
+    ggtitle(paste("Eigenchart number:",1))
 
-for (i in 1:length(evec4)){
-  eigenchart_diff_4 <- eigenchart_diff_4 + (evec4[i] * dax_series_diff_center_matrix[i,])
-}
+p_eigencharts_2 <- ggplot(eigencharts, mapping = aes(x=minute, y=eigencharts[,2])) +
+    geom_line() + 
+    xlab("minute") + 
+    ylab("index") +
+    ggtitle(paste("Eigenchart number:",2))
 
-for (i in 1:length(evec5)){
-  eigenchart_diff_5 <- eigenchart_diff_5 + (evec5[i] * dax_series_diff_center_matrix[i,])
-}
+p_eigencharts_3 <- ggplot(eigencharts, mapping = aes(x=minute, y=eigencharts[,3])) +
+    geom_line() + 
+    xlab("minute") + 
+    ylab("index") +
+    ggtitle(paste("Eigenchart number:",3))
 
-# recover DAX eigenchart from eigenchart_diff vector
+p_eigencharts_4 <- ggplot(eigencharts, mapping = aes(x=minute, y=eigencharts[,4])) +
+    geom_line() + 
+    xlab("minute") + 
+    ylab("index") +
+    ggtitle(paste("Eigenchart number:",4))
 
-for (i in 1:length(eigenchart_diff_1)){
-  eigenchart_1[i+1] <- eigenchart_1[i] + eigenchart_diff_1[i]
-}
-
-for (i in 1:length(eigenchart_diff_2)){
-  eigenchart_2[i+1] <- eigenchart_2[i] + eigenchart_diff_2[i]
-}
-
-for (i in 1:length(eigenchart_diff_3)){
-  eigenchart_3[i+1] <- eigenchart_3[i] + eigenchart_diff_3[i]
-}
-
-for (i in 1:length(eigenchart_diff_4)){
-  eigenchart_4[i+1] <- eigenchart_4[i] + eigenchart_diff_4[i]
-}
-
-for (i in 1:length(eigenchart_diff_5)){
-  eigenchart_5[i+1] <- eigenchart_5[i] + eigenchart_diff_5[i]
-}
-
-# plot DAX restored from the average change per minute
-vec1 <- as.data.frame(eigenchart_1)
-vec2 <- as.data.frame(eigenchart_2)
-vec3 <- as.data.frame(eigenchart_3)
-vec4 <- as.data.frame(eigenchart_4)
-vec5 <- as.data.frame(eigenchart_5)
-
-# plot first 4 Eigencharts on a grid
-p1 <- ggplot(vec, mapping = aes(x=minute, y=vec1$eigenchart_1)) +
-  geom_line() + 
-  xlab("minute") + 
-  ylab("DAX") +
-  ggtitle("1st DAX Eigenchart")
-
-p2 <- ggplot(vec, mapping = aes(x=minute, y=vec2$eigenchart_2)) +
-  geom_line() + 
-  xlab("minute") + 
-  ylab("DAX") +
-  ggtitle("2nd DAX Eigenchart")
-
-p3 <- ggplot(vec, mapping = aes(x=minute, y=vec3$eigenchart_3)) +
-  geom_line() + 
-  xlab("minute") + 
-  ylab("DAX") +
-  ggtitle("3rd DAX Eigenchart")
-
-p4 <- ggplot(vec, mapping = aes(x=minute, y=vec4$eigenchart_4)) +
-  geom_line() + 
-  xlab("minute") + 
-  ylab("DAX") +
-  ggtitle("4th DAX Eigenchart")
-
-# ggplot(vec, mapping = aes(x=minute, y=vec5$eigenchart_5)) +
-#  geom_line() + 
-#  xlab("minute") + 
-#  ylab("DAX") +
-#  ggtitle("5th DAX Eigenchart")
-
-grid.arrange(p1,p2,p3,p4, nrow=2)
+grid.arrange(p_eigencharts_1, p_eigencharts_2, p_eigencharts_3, p_eigencharts_4, nrow=2)
 ```
 
 # Analysis Part 2 (kmeans)
@@ -525,7 +467,7 @@ data.frame(num_centers, wss) %>%
   ggtitle("Finding optimal number of clusters")
 ```
 
-Having **three clusters** seem to be the optimum in this case. We add the cluster assignment to the data (dax_movement_cluster) and plot the clustering results.
+Having **three** or **four** clusters** seem to be the optimum in this case. We continue with three clusters here, add the cluster assignment to the data (dax_movement_cluster) and plot the clustering results.
 
 ```{r warning=FALSE}
 km <- kmeans(dax_movement[,2:3], centers = 3, algorithm = "Lloyd", iter.max = 30, nstart = 20)
