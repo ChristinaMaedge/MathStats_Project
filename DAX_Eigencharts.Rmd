@@ -271,7 +271,8 @@ Let's have a look, how we can recover a single DAX time series from an increasin
 - We have already seen a plot of the first intraday DAX series above.
 - Now we try to reproduce the first DAX intraday chart using an increasing number of eigenvectors.
 - Using only the first 10 eigenvectors does not fit the original series at all.
-- Taking the first 75 eigenvectors into account, we can recognize the original series.
+- Taking the first 75 eigenvectors into account, we can recognize the original series in its shape, but the overall level is still too low.
+- With the first 100 eigenvectors we get resonably close to the original chart.
 - And from all 165 eigenvectors we end up with the exact original data.
 - Since we applied PCA to centered minutely changes, we need to de-mean the recovered time series of minutely changes by adding the average change from above (avg_diff).
 - And to restore the DAX chart, minutely changes need to be summed up and the starting value needs to be added.
@@ -295,8 +296,27 @@ vec_165 <- as.data.frame(recov_165_s1_diff_demean_acc)
 p_recov_165 <- ggplot(vec, mapping = aes(x=minute, y=vec_165$recov_165_s1_diff_demean_acc)) +
   geom_line() + 
   xlab("minute") + 
-  ylab("DAX chart") +
-  ggtitle("from 165 eigenvectors")
+  ylab("165")
+
+# recover 1st DAX series from 100 eigenvectors
+recov_100 <- pc_scores[,1:100] %*% t(eigenvectors)[1:100,]
+recov_100_s1_diff <- recov_100[1,]
+recov_100_s1_diff_demean <- avg_diff # initialize
+recov_100_s1_diff_demean[2:840] <- recov_100_s1_diff_demean[2:840] + recov_100_s1_diff
+recov_100_s1_diff_demean_acc <- rep(0,840) # initialize
+recov_100_s1_diff_demean_acc[1] <- as.double(dax_series[1,2]) # set starting value
+
+for (i in 2:840){
+  recov_100_s1_diff_demean_acc[i] <- recov_100_s1_diff_demean_acc[i-1] +
+    recov_100_s1_diff_demean[i]
+}
+
+vec_100 <- as.data.frame(recov_100_s1_diff_demean_acc)
+
+p_recov_100 <- ggplot(vec, mapping = aes(x=minute, y=vec_100$recov_100_s1_diff_demean_acc)) +
+  geom_line() + 
+  xlab("minute") + 
+  ylab("100")
 
 # recover 1st DAX series from 75 eigenvectors
 recov_75 <- pc_scores[,1:75] %*% t(eigenvectors)[1:75,]
@@ -316,8 +336,7 @@ vec_75 <- as.data.frame(recov_75_s1_diff_demean_acc)
 p_recov_75 <- ggplot(vec, mapping = aes(x=minute, y=vec_75$recov_75_s1_diff_demean_acc)) +
   geom_line() + 
   xlab("minute") + 
-  ylab("DAX chart") +
-  ggtitle("from 75 eigenvectors")
+  ylab("75")
 
 # recover 1st DAX series from 10 eigenvectors
 recov_10 <- pc_scores[,1:10] %*% t(eigenvectors)[1:10,]
@@ -337,10 +356,31 @@ vec_10 <- as.data.frame(recov_10_s1_diff_demean_acc)
 p_recov_10 <- ggplot(vec, mapping = aes(x=minute, y=vec_10$recov_10_s1_diff_demean_acc)) +
   geom_line() + 
   xlab("minute") + 
-  ylab("DAX chart") +
-  ggtitle("from 10 eigenvectors")
+  ylab("10")
 
-grid.arrange(p_recov_10, p_recov_75, p_recov_165, nrow = 3)
+grid.arrange(p_recov_10, p_recov_75, p_recov_100, p_recov_165, nrow = 4)
+```
+
+Or maybe it can better be visualized in *one* plot:
+
+```{r}
+colnames(vec_10) <- "index"
+vec_10 <- vec_10 %>% mutate("num_evecs"=10, "minute"=minute)
+colnames(vec_75) <- "index"
+vec_75 <- vec_75 %>% mutate("num_evecs"=75, "minute"=minute)
+colnames(vec_100) <- "index"
+vec_100 <- vec_100 %>% mutate("num_evecs"=100, "minute"=minute)
+colnames(vec_165) <- "index"
+vec_165 <- vec_165 %>% mutate("num_evecs"=165, "minute"=minute)
+
+vec_all <- rbind(vec_10, vec_75, vec_100, vec_165)
+vec_all$num_evecs <- as.factor(vec_all$num_evecs)
+
+ggplot(data = vec_all, aes(x=minute, y=index)) + 
+  geom_line(aes(colour=num_evecs)) + 
+  scale_color_manual(breaks = c("10", "75", "100", "165"),
+                        values=c("red", "blue", "green", "black")) +
+  ggtitle("Recover DAX chart from various number of eigenvectors")
 ```
 
 ## PCA Conclusion
