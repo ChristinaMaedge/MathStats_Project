@@ -507,7 +507,7 @@ data.frame(num_centers, wss) %>%
   ggtitle("Finding optimal number of clusters")
 ```
 
-Having **three** or **four** clusters** seem to be the optimum in this case. We continue with three clusters here, add the cluster assignment to the data (dax_movement_cluster) and plot the clustering results.
+Having **three** or **four** clusters seem to be the optimum in this case. We continue with three clusters here, add the cluster assignment to the data (dax_movement_cluster) and plot the clustering results.
 
 ```{r warning=FALSE}
 km <- kmeans(dax_movement[,2:3], centers = 3, algorithm = "Lloyd", iter.max = 30, nstart = 20)
